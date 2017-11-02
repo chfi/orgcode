@@ -1,0 +1,54 @@
+name: orgcode
+version: '0.1.0.0'
+category: Web
+author: Christian Fischer
+maintainer: christian@chfi.se
+copyright: 2017 Christian Fischer
+license: BSD3
+github: chfi/orgcode
+
+extra-source-files:
+- README.md
+
+default-extensions:
+- OverloadedStrings
+- NoImplicitPrelude
+
+dependencies:
+- protolude >=0.1.6 && <0.2
+- attoparsec
+- text
+
+library:
+  source-dirs: src
+  ghc-options: -Wall
+  exposed-modules:
+  - Lib
+  dependencies:
+  - base >=4.7 && <5
+
+executables:
+  orgcode-exe:
+    main: Main.hs
+    source-dirs: app
+    ghc-options:
+    - -Wall
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - base
+    - orgcode
+
+tests:
+  orgcode-test:
+    main: Spec.hs
+    source-dirs: test
+    ghc-options:
+    - -Wall
+    - -threaded
+    - -rtsopts
+    - -with-rtsopts=-N
+    dependencies:
+    - base
+    - orgcode
