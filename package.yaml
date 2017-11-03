@@ -13,6 +13,8 @@ extra-source-files:
 default-extensions:
 - OverloadedStrings
 - NoImplicitPrelude
+- RecordWildCards
+- DeriveFunctor
 
 dependencies:
 - protolude >=0.1.6 && <0.2

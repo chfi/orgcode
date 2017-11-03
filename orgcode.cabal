@@ -37,7 +37,7 @@ library
     , text
     , base >=4.7 && <5
   default-language: Haskell2010
-  default-extensions: OverloadedStrings NoImplicitPrelude
+  default-extensions: OverloadedStrings NoImplicitPrelude RecordWildCards DeriveFunctor
 
 executable orgcode-exe
   hs-source-dirs:
@@ -51,7 +51,7 @@ executable orgcode-exe
     , base
     , orgcode
   default-language: Haskell2010
-  default-extensions: OverloadedStrings NoImplicitPrelude
+  default-extensions: OverloadedStrings NoImplicitPrelude RecordWildCards DeriveFunctor
 
 test-suite orgcode-test
   type: exitcode-stdio-1.0
@@ -66,4 +66,4 @@ test-suite orgcode-test
     , orgcode
   ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
   default-language: Haskell2010
-  default-extensions: OverloadedStrings NoImplicitPrelude
+  default-extensions: OverloadedStrings NoImplicitPrelude RecordWildCards DeriveFunctor
