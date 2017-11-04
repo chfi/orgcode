@@ -30,7 +30,10 @@ parseBlock b = do
   rest <- tailMay b
   pure (header, rest)
 
--- run `parseLanguage` on each element in `h`, use the first success
+
+headerProp :: Text -> ParsedBlock [Text] -> Maybe Text
+headerProp prefix (h, _) = getFirst $ foldMap (First . T.stripPrefix (prefix <> ":")) h
+
 blockLanguage :: ParsedBlock [Text] -> Maybe (ParsedBlock Language)
 blockLanguage (h, b) = undefined
 
@@ -47,6 +50,18 @@ nextBlock ls = if List.null block'
 
 extractCodeblocks :: [Text] -> [Block]
 extractCodeblocks ls = List.unfoldr nextBlock $ zip [1..] ls
+
+{-
+The only tools we have are those from the headers, and whatever is provided as a
+cmd line argument. Headers are a list of words, and we don't want to depend too
+much on arguments.
+-}
+
+-- filepathRule :: [Text] -> Maybe ([])
+
+data Options = Options { filepath :: Maybe FilePath
+                       , outputs :: Map [Text] FilePath
+                       }
 
 main :: IO ()
 main = do
