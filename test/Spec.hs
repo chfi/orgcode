@@ -42,5 +42,14 @@ exampleCode2 = exampleCode <>
   , "but that is all"
   ]
 
+exHeader :: [Text]
+exHeader = [":name", "hello", ":output", "farts"]
+
+badHeader :: [Text]
+badHeader = [":name", "hello", "output", ":nope", "yes"]
+
+badHeader2 :: [Text]
+badHeader2 = ["weird!", ":name", "hello", "output", ":nope", "yes"]
+
 main :: IO ()
 main = putStrLn ("Test suite not yet implemented" :: Text)

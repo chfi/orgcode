@@ -32,9 +32,12 @@ library
       Lib.Prelude
       Paths_orgcode
   build-depends:
-      protolude >=0.1.6 && <0.2
-    , attoparsec
+      protolude
     , text
+    , containers
+    , aeson
+    , process
+    , process-extras
     , base >=4.7 && <5
   default-language: Haskell2010
   default-extensions: OverloadedStrings NoImplicitPrelude RecordWildCards DeriveFunctor
@@ -45,9 +48,12 @@ executable orgcode-exe
   main-is: Main.hs
   ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N
   build-depends:
-      protolude >=0.1.6 && <0.2
-    , attoparsec
+      protolude
     , text
+    , containers
+    , aeson
+    , process
+    , process-extras
     , base
     , orgcode
   default-language: Haskell2010
@@ -59,9 +65,12 @@ test-suite orgcode-test
       test
   main-is: Spec.hs
   build-depends:
-      protolude >=0.1.6 && <0.2
-    , attoparsec
+      protolude
     , text
+    , containers
+    , aeson
+    , process
+    , process-extras
     , base
     , orgcode
   ghc-options: -Wall -threaded -rtsopts -with-rtsopts=-N

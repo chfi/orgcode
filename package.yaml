@@ -17,9 +17,12 @@ default-extensions:
 - DeriveFunctor
 
 dependencies:
-- protolude >=0.1.6 && <0.2
-- attoparsec
+- protolude
 - text
+- containers
+- aeson
+- process
+- process-extras
 
 library:
   source-dirs: src
