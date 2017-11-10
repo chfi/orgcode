@@ -9,10 +9,14 @@ import Data.Aeson.Types (parseMaybe, parseEither, Parser)
 import qualified Data.Map as Map
 import qualified Data.List as List
 import qualified Data.Text as T
+import qualified Data.Text.IO as T.IO
+import qualified Data.ByteString.Lazy as LBS
 
 import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 
+import System.Directory (removeFile, makeAbsolute)
+import System.IO (openTempFile, hClose)
 import System.Process
 
 
@@ -110,18 +114,13 @@ psBlocks = mapMaybe (\b -> case language b of
                               "purescript" -> Just $ PurescriptBlock b
                               _ -> Nothing)
 
-
-
-pscRebuildCmd :: Text -> Value
+pscRebuildCmd :: FilePath -> Value
 pscRebuildCmd path = object [ ("command", String "rebuild")
                             , ("params", params)]
-  where params = object [("file", String path)]
-
-parseEither' :: (a -> Parser b) -> a -> Either Text b
-parseEither' f a = first T.pack $ parseEither f a
+  where params = object [("file", String (T.pack path))]
 
 
-data CompileStatus = CFail [Text] | CSuccess [Text] deriving (Eq, Ord, Show)
+data CompileStatus = CFail Text | CSuccess Text | ParseError Text deriving (Eq, Ord, Show)
 
 {-
   All Responses are wrapped in the following format:
@@ -133,26 +132,53 @@ data CompileStatus = CFail [Text] | CSuccess [Text] deriving (Eq, Ord, Show)
 -- In the Success case you get a list of warnings in the compilers json format.
 -- In the Error case you get the errors in the compilers json format
 -}
-parseRebuildOutput :: ByteString -> Maybe CompileStatus
+parseRebuildOutput :: LByteString -> Maybe CompileStatus
 parseRebuildOutput val = do
-  obj <- decodeStrict val
-  resultType <- parseMaybe (\o -> o .: "resultType") obj :: Maybe Text
-  case resultType of
-    "error" -> do
-      errors <- parseMaybe (\o -> o .: "result") obj :: Maybe [Text]
-      Just $ CFail errors
-    "success" -> do
-      warnings <- parseMaybe (\o -> o .: "result") obj :: Maybe [Text]
-      Just $ CSuccess warnings
-    _ -> Nothing
+  obj <- decode val
 
--- {
---   "command": "rebuild",
---   "params": {
---     "file": "/path/to/file.purs"
---     "actualFile": "/path/to/actualFile.purs"
---   }
--- }
+  resultType <- parseMaybe (.: "resultType") obj
+
+  case resultType :: Maybe Text of
+    Just "error" -> CFail <$> parseMaybe (.: "result") obj
+    Just "success" -> CSuccess <$> parseMaybe (.: "result") obj
+    Just x -> Just $ ParseError x
+    Nothing -> Just $ ParseError "Completely wrong"
+
+
+
+pursIdeSendCmd :: Int -> Value -> IO LByteString
+pursIdeSendCmd port v = do
+  (Just hIn, Just hOut, ideErr, h) <-
+    createProcess (shell $ "purs ide client -p " <> show port)
+      { std_in = CreatePipe, std_out = CreatePipe }
+
+  LBS.hPut hIn $ encode v
+  void $ waitForProcess h
+  LBS.hGetContents hOut
+
+
+compilePS :: Int -> PurescriptBlock -> IO CompileStatus
+compilePS port (PurescriptBlock b) = do
+  (path, h) <- openTempFile "." "org.purs"
+  T.IO.hPutStr h $ T.unlines $ contents b
+
+  absPath <- makeAbsolute path
+  results <- pursIdeSendCmd port $ pscRebuildCmd absPath
+
+  hClose h
+  removeFile path
+
+  case parseRebuildOutput results of
+    Nothing -> pure $ ParseError "error"
+    Just x -> pure x
+
+
+testBlock :: PurescriptBlock
+testBlock = PurescriptBlock $ CodeBlock "purescript" mempty ls
+  where ls = [ "module Test where"
+             , "import Prelude"
+             , "main = unit"
+             ]
 
 
 {-
@@ -161,34 +187,41 @@ cmd line argument. Headers are a list of words, and we don't want to depend too
 much on arguments.
 -}
 
--- filepathRule :: [Text] -> Maybe ([])
 
 data Options = Options { projectPath :: FilePath
                        , filepath :: Maybe FilePath
                        , outputs :: Map [Text] FilePath
+                       , port :: Int
                        }
 
 main :: IO ()
 main = do
-  -- print "communicating w/ server"
-  -- (Just hIn, Just hOut, ideErr, h) <-
-  --   createProcess shell "purs ide client" { std_in = CreatePipe
-  --                                         , std_out = CreatePipe
-  --                                         }
+  print "communicating w/ server"
+  res <- compilePS 15910 testBlock
+  case res of
+    CFail x -> do
+      print "compilation failure!"
+      print "errors:"
+      putStrLn x
+    CSuccess x -> do
+      print "compilation success!"
+      print "warnings:"
+      putStrLn x
+    ParseError x -> do
+      print "parse error"
+      print x
 
-  args <- getArgs
+  -- case args of
+  --   [fn] -> do
+  --     ls <- T.lines <$> readFile fn
 
-  case args of
-    [fn] -> do
-      ls <- T.lines <$> readFile fn
+  --     let raw = extractCodeblocks ls
+  --     print $ length raw
 
-      let raw = extractCodeblocks ls
-      print $ length raw
+  --     for_ (zip raw [1..]) $ \(cb,i) -> do
+  --            putStrLn   ("#########################" :: Text)
+  --            putStrLn $ "## codeblock #" <> (show i :: Text)
+  --            putStrLn   ("#########################\n" :: Text)
+  --            for_ cb (\(i, l) -> putStrLn $ show i <> "\t" <> l)
 
-      for_ (zip raw [1..]) $ \(cb,i) -> do
-             putStrLn   ("#########################" :: Text)
-             putStrLn $ "## codeblock #" <> (show i :: Text)
-             putStrLn   ("#########################\n" :: Text)
-             for_ cb (\(i, l) -> putStrLn $ show i <> "\t" <> l)
-
-    _ -> print "please provide a filename to parse"
+  --   _ -> print "please provide a filename to parse"
