@@ -68,4 +68,4 @@ extra-package-dbs: []
 nix:
   enable: true
   pure: true
-  packages: []
+  packages: [purescript]

@@ -19,10 +19,12 @@ default-extensions:
 dependencies:
 - protolude
 - text
+- bytestring
 - containers
 - aeson
 - process
 - process-extras
+- directory
 
 library:
   source-dirs: src
