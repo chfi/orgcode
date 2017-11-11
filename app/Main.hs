@@ -1,6 +1,6 @@
 module Main where
 
-import Protolude
+import Protolude hiding (decodeUtf8)
 import Lib
 
 import Data.Aeson
@@ -9,6 +9,8 @@ import Data.Aeson.Types (parseMaybe, parseEither, Parser)
 import qualified Data.Map as Map
 import qualified Data.List as List
 import qualified Data.Text as T
+import Data.Text.Lazy.Encoding (decodeUtf8)
+import qualified Data.Text.Lazy as LT
 import qualified Data.Text.IO as T.IO
 import qualified Data.ByteString.Lazy as LBS
 
@@ -16,7 +18,7 @@ import Data.List.NonEmpty (NonEmpty(..))
 import qualified Data.List.NonEmpty as NE
 
 import System.Directory (removeFile, makeAbsolute)
-import System.IO (openTempFile, hClose)
+import System.IO (openTempFile, hClose, hFlush)
 import System.Process
 
 
@@ -80,8 +82,8 @@ nextBlock ls = if List.null block'
         block' = block <> List.take 1 rest
         rest' = drop 1 rest
 
-extractCodeblocks :: [Text] -> [RawBlock]
-extractCodeblocks ls = List.unfoldr nextBlock $ zip [1..] ls
+rawBlocks :: [Text] -> [RawBlock]
+rawBlocks ls = List.unfoldr nextBlock $ zip [1..] ls
 
 
 -- codeblocks are in the same equivalence class
@@ -109,10 +111,10 @@ combineBlocks bs = (NE.head bs) { contents = foldMap contents bs }
 
 newtype PurescriptBlock = PurescriptBlock (CodeBlock [Text])
 
-psBlocks :: [CodeBlock [Text]] -> [PurescriptBlock]
-psBlocks = mapMaybe (\b -> case language b of
-                              "purescript" -> Just $ PurescriptBlock b
-                              _ -> Nothing)
+purescriptBlocks :: [CodeBlock [Text]] -> [PurescriptBlock]
+purescriptBlocks = mapMaybe (\b -> case language b of
+                                "purescript" -> Just $ PurescriptBlock b
+                                _ -> Nothing)
 
 pscRebuildCmd :: FilePath -> Value
 pscRebuildCmd path = object [ ("command", String "rebuild")
@@ -132,18 +134,17 @@ data CompileStatus = CFail Text | CSuccess Text | ParseError Text deriving (Eq, 
 -- In the Success case you get a list of warnings in the compilers json format.
 -- In the Error case you get the errors in the compilers json format
 -}
-parseRebuildOutput :: LByteString -> Maybe CompileStatus
-parseRebuildOutput val = do
-  obj <- decode val
 
-  resultType <- parseMaybe (.: "resultType") obj
+parseRebuildOutput :: LByteString -> CompileStatus
+parseRebuildOutput val =
+  case (hasSuccess, hasError) of
+    (True, _) -> CSuccess "Compilation success"
+    (_, True) -> CFail "Compilation failure"
+    _ -> ParseError $ LT.toStrict val'
 
-  case resultType :: Maybe Text of
-    Just "error" -> CFail <$> parseMaybe (.: "result") obj
-    Just "success" -> CSuccess <$> parseMaybe (.: "result") obj
-    Just x -> Just $ ParseError x
-    Nothing -> Just $ ParseError "Completely wrong"
-
+  where val' = decodeUtf8 val
+        hasSuccess = "success" `LT.isInfixOf` val'
+        hasError = "error" `LT.isInfixOf` val'
 
 
 pursIdeSendCmd :: Int -> Value -> IO LByteString
@@ -160,7 +161,8 @@ pursIdeSendCmd port v = do
 compilePS :: Int -> PurescriptBlock -> IO CompileStatus
 compilePS port (PurescriptBlock b) = do
   (path, h) <- openTempFile "." "org.purs"
-  T.IO.hPutStr h $ T.unlines $ contents b
+  T.IO.hPutStrLn h $ T.unlines $ contents b
+  hFlush h
 
   absPath <- makeAbsolute path
   results <- pursIdeSendCmd port $ pscRebuildCmd absPath
@@ -168,9 +170,7 @@ compilePS port (PurescriptBlock b) = do
   hClose h
   removeFile path
 
-  case parseRebuildOutput results of
-    Nothing -> pure $ ParseError "error"
-    Just x -> pure x
+  pure $ parseRebuildOutput results
 
 
 testBlock :: PurescriptBlock
