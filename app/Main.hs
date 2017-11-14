@@ -91,7 +91,8 @@ rawBlocks ls = List.unfoldr nextBlock $ zip [1..] ls
 orderBlocks :: CodeBlock a -> CodeBlock a -> Ordering
 orderBlocks b1 b2 = (language b1 `compare` language b2) `compare`
                     (argsOrder "prologue" b1 b2) `compare`
-                    (argsOrder "file" b1 b2)
+                    (argsOrder "file" b1 b2) `compare`
+                    (argsOrder "tangle" b1 b2)
 
 equivalentBlocks :: CodeBlock a -> CodeBlock a -> Bool
 equivalentBlocks b1 b2 = EQ == orderBlocks b1 b2
@@ -219,7 +220,6 @@ main = do
           combined = mapMaybe combineBlocks grouped
           pursBlocks :: [PurescriptBlock]
           pursBlocks = purescriptBlocks combined
-          sorted =
 
       print "grouped"
       traverse_ (\bs -> print (fmap args bs)) grouped
@@ -237,4 +237,24 @@ main = do
           CSuccess s -> print "compilation success" *> print s
           ParseError e -> print "parsing error" *> print e
 
-    _ -> print "orgcode <port> <file>"
+    [fn] -> do
+      ls <- T.lines . LT.toStrict . decodeUtf8 <$> LBS.readFile fn
+
+      let raw :: [[Text]]
+          raw = fmap snd <$> rawBlocks ls
+          grouped :: [[CodeBlock [Text]]]
+          grouped = groupOutputBlocks $ mapMaybe parseCodeBlock raw
+          combined :: [CodeBlock [Text]]
+          combined = mapMaybe combineBlocks grouped
+          pursBlocks :: [PurescriptBlock]
+          pursBlocks = purescriptBlocks combined
+
+      print "grouped"
+      traverse_ (\bs -> do
+                    traverse_ (putStrLn . T.unlines . contents) bs
+                ) grouped
+      print "combined"
+      traverse_ (\b -> putStrLn (T.unlines $ contents b)) combined
+
+
+    _ -> print "orgcode <port> <file>, or orgcode <file>"
