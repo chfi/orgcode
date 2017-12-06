@@ -108,7 +108,7 @@ groupOutputBlocks =
 -- | Assumes the blocks in the input list are equivalent according to `equivalentBlocks`;
 -- | grouped according to `groupOutputBlocks`!
 combineBlocks :: Monoid a => [CodeBlock a] -> Maybe (CodeBlock a)
-combineBlocks (b:bs) = Just $ b { contents = foldMap contents bs }
+combineBlocks (b:bs) = Just $ b { contents = foldMap contents (b:bs) }
 combineBlocks _ = Nothing
 
 
