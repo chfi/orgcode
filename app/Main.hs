@@ -1,10 +1,10 @@
+{-# LANGUAGE PartialTypeSignatures #-}
+
 module Main where
 
 import Protolude hiding (decodeUtf8)
-import Lib
 
 import Data.Aeson
-import Data.Aeson.Types (parseMaybe, parseEither, Parser)
 
 import qualified Data.Map as Map
 import qualified Data.List as List
@@ -14,8 +14,8 @@ import qualified Data.Text.Lazy as LT
 import qualified Data.Text.IO as T.IO
 import qualified Data.ByteString.Lazy as LBS
 
-import Data.List.NonEmpty (NonEmpty(..))
-import qualified Data.List.NonEmpty as NE
+import Control.Lens
+import Data.Aeson.Lens
 
 import System.Directory (removeFile, makeAbsolute)
 import System.IO (openTempFile, hClose, hFlush)
@@ -25,20 +25,12 @@ import System.Process
 data CodeBlock a = CodeBlock { language :: Text
                              , args :: Map Text Text
                              , contents :: a
-                             } deriving (Eq, Ord, Functor)
+                             } deriving (Eq, Ord, Show, Functor)
 
 
-argsEqual :: Text -> CodeBlock a -> CodeBlock a -> Bool
-argsEqual arg b1 b2 = fromMaybe False $ do
-  arg1 <- Map.lookup arg (args b1)
-  arg2 <- Map.lookup arg (args b2)
-  pure $ arg1 == arg2
+cmpByArg :: Text -> CodeBlock a -> CodeBlock a -> Ordering
+cmpByArg arg b1 b2 = Map.lookup arg (args b1) `compare` Map.lookup arg (args b2)
 
-argsOrder :: Text -> CodeBlock a -> CodeBlock a -> Ordering
-argsOrder arg b1 b2 = fromMaybe EQ $ do
-  arg1 <- Map.lookup arg (args b1)
-  arg2 <- Map.lookup arg (args b2)
-  pure $ arg1 `compare` arg2
 
 type LOC = (Int, Text)
 type RawBlock = [LOC]
@@ -83,27 +75,13 @@ rawBlocks :: [Text] -> [RawBlock]
 rawBlocks ls = List.unfoldr nextBlock $ zip [1..] ls
 
 
--- codeblocks are in the same equivalence class
--- re: output when these parts are equal:
---     language
---     imports to prepend (prologue)
---     output filepath (file)
-orderBlocks :: CodeBlock a -> CodeBlock a -> Ordering
-orderBlocks b1 b2 = (language b1 `compare` language b2) `compare`
-                    (argsOrder "prologue" b1 b2) `compare`
-                    (argsOrder "file" b1 b2) `compare`
-                    (argsOrder "tangle" b1 b2)
-
-equivalentBlocks :: CodeBlock a -> CodeBlock a -> Bool
-equivalentBlocks b1 b2 = EQ == orderBlocks b1 b2
-
-
 -- | Output should be a list of lists of codeblocks that can be combined, in order.
 -- | Culls empty output lists.
 groupOutputBlocks :: [CodeBlock a] -> [[CodeBlock a]]
 groupOutputBlocks =
-  List.groupBy equivalentBlocks .
-  List.sortBy orderBlocks
+  let ordering = cmpByArg ":file"
+  in List.groupBy (\b1 b2 -> EQ == ordering b1 b2) .
+     List.sortBy ordering
 
 -- | Assumes the blocks in the input list are equivalent according to `equivalentBlocks`;
 -- | grouped according to `groupOutputBlocks`!
@@ -114,10 +92,12 @@ combineBlocks _ = Nothing
 
 newtype PurescriptBlock = PurescriptBlock (CodeBlock [Text])
 
+
 purescriptBlocks :: [CodeBlock [Text]] -> [PurescriptBlock]
 purescriptBlocks = mapMaybe (\b -> case language b of
                                 "purescript" -> Just $ PurescriptBlock b
                                 _ -> Nothing)
+
 
 pscRebuildCmd :: FilePath -> Value
 pscRebuildCmd path = object [ ("command", String "rebuild")
@@ -125,29 +105,29 @@ pscRebuildCmd path = object [ ("command", String "rebuild")
   where params = object [("file", String (T.pack path))]
 
 
-data CompileStatus = CFail Text | CSuccess Text | ParseError Text deriving (Eq, Ord, Show)
+data CompileStatus =
+    CFail [Text]
+  | CSuccess [Text]
+  | ParseError [Text]
+  deriving (Eq, Ord, Show)
 
-{-
-  All Responses are wrapped in the following format:
-  {
-    "resultType": "success|error",
-    "result": Result|Error
-  }
+parseCompiler :: AsValue a => a -> Maybe CompileStatus
+parseCompiler val = do
+  resType <- case val ^? key "resultType" . _String of
+    Just "success" -> pure CSuccess
+    Just "error" -> pure CFail
+    _ -> Nothing
 
--- In the Success case you get a list of warnings in the compilers json format.
--- In the Error case you get the errors in the compilers json format
--}
+  results <- val ^? key "result" . _Array
+  resType . toList <$> traverse (\x -> x ^? key "message" . _String) results
 
-parseRebuildOutput :: LByteString -> CompileStatus
-parseRebuildOutput val =
-  case (hasSuccess, hasError) of
-    (True, _) -> CSuccess "Compilation success"
-    (_, True) -> CFail "Compilation failure"
-    _ -> ParseError $ LT.toStrict val'
 
-  where val' = decodeUtf8 val
-        hasSuccess = "success" `LT.isInfixOf` val'
-        hasError = "error" `LT.isInfixOf` val'
+parsingFailure :: a -> CompileStatus
+parsingFailure _ = ParseError ["Something went very wrong"]
+
+
+parseCompileOutput :: AsValue a => a -> CompileStatus
+parseCompileOutput val = fromMaybe (parsingFailure val) $ parseCompiler val
 
 
 pursIdeSendCmd :: Int -> Value -> IO LByteString
@@ -165,10 +145,9 @@ compilePS :: Int -> PurescriptBlock -> IO CompileStatus
 compilePS port (PurescriptBlock b) = do
   (path, h) <- openTempFile "." "org.purs"
 
-  case T.unpack <$> Map.lookup "prologue" (args b) of
-    Nothing -> pure ()
+  case T.unpack <$> Map.lookup ":prologue" (args b) of
+    Nothing -> putStrLn ("Code block lacks import" :: Text)
     Just ip -> do
-      print "prepending imports"
       importsPath <- makeAbsolute ip
       imports <- T.IO.readFile importsPath
       T.IO.hPutStrLn h imports
@@ -182,21 +161,19 @@ compilePS port (PurescriptBlock b) = do
   hClose h
   removeFile path
 
-  pure $ parseRebuildOutput results
+  pure $ parseCompileOutput results
 
 
-{-
-The only tools we have are those from the headers, and whatever is provided as a
-cmd line argument. Headers are a list of words, and we don't want to depend too
-much on arguments.
--}
-
-
-data Options = Options { projectPath :: FilePath
-                       , filepath :: Maybe FilePath
-                       , outputs :: Map [Text] FilePath
-                       , port :: Int
-                       }
+parseInput :: [Text] -> [PurescriptBlock]
+parseInput ls = pursBlocks
+  where raw :: [[Text]]
+        raw = fmap snd <$> rawBlocks ls
+        grouped :: [[CodeBlock [Text]]]
+        grouped = groupOutputBlocks $ mapMaybe parseCodeBlock raw
+        combined :: [CodeBlock [Text]]
+        combined = mapMaybe combineBlocks grouped
+        pursBlocks :: [PurescriptBlock]
+        pursBlocks = purescriptBlocks combined
 
 main :: IO ()
 main = do
@@ -211,50 +188,28 @@ main = do
         Nothing -> undefined
         Just p' -> pure p'
 
-
-      let raw :: [[Text]]
-          raw = fmap snd <$> rawBlocks ls
-          grouped :: [[CodeBlock [Text]]]
-          grouped = groupOutputBlocks $ mapMaybe parseCodeBlock raw
-          combined :: [CodeBlock [Text]]
-          combined = mapMaybe combineBlocks grouped
-          pursBlocks :: [PurescriptBlock]
-          pursBlocks = purescriptBlocks combined
-
-      print "grouped"
-      traverse_ (\bs -> print (fmap args bs)) grouped
-      print "combined"
-      traverse_ (\b -> print (args b)) combined
+      let pursBlocks = parseInput ls
 
       results <- traverse (compilePS port) pursBlocks
 
       for_ (zip results pursBlocks) $ \(r, PurescriptBlock b) -> do
-        -- case Map.lookup "file" (args b)
-        print "in loop"
         print (args b)
-        case r of
-          CFail f -> print "compilation failure" *> print f
-          CSuccess s -> print "compilation success" *> print s
-          ParseError e -> print "parsing error" *> print e
+        putStrLn ("" :: Text)
+
+        str <- case r of
+          CFail f      -> putStrLn ("Compilation failure" :: Text) *> pure f
+          CSuccess s   -> putStrLn ("Compilation success" :: Text) *> pure s
+          ParseError e -> putStrLn ("Parsing error" :: Text)       *> pure e
+
+        for_ str putStrLn
+
 
     [fn] -> do
       ls <- T.lines . LT.toStrict . decodeUtf8 <$> LBS.readFile fn
 
-      let raw :: [[Text]]
-          raw = fmap snd <$> rawBlocks ls
-          grouped :: [[CodeBlock [Text]]]
-          grouped = groupOutputBlocks $ mapMaybe parseCodeBlock raw
-          combined :: [CodeBlock [Text]]
-          combined = mapMaybe combineBlocks grouped
-          pursBlocks :: [PurescriptBlock]
-          pursBlocks = purescriptBlocks combined
+      let pursBlocks = parseInput ls
 
-      print "grouped"
-      traverse_ (\bs -> do
-                    traverse_ (putStrLn . T.unlines . contents) bs
-                ) grouped
-      print "combined"
-      traverse_ (\b -> putStrLn (T.unlines $ contents b)) combined
-
+      print "Purescript code blocks:"
+      traverse_ (\(PurescriptBlock b) -> putStrLn (T.unlines $ contents b)) pursBlocks
 
     _ -> print "orgcode <port> <file>, or orgcode <file>"

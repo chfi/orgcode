@@ -21,7 +21,9 @@ dependencies:
 - text
 - bytestring
 - containers
+- lens
 - aeson
+- lens-aeson
 - process
 - process-extras
 - directory
@@ -35,7 +37,7 @@ library:
   - base >=4.7 && <5
 
 executables:
-  orgcode-exe:
+  orgcode:
     main: Main.hs
     source-dirs: app
     ghc-options:
